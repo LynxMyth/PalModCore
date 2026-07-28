@@ -4,12 +4,12 @@
 
 **Quality-of-life creature companions for Minecraft — without the turns.**
 
-![Version](https://img.shields.io/badge/version-0.9.1-blue)
+![Version](https://img.shields.io/badge/version-0.9.2-blue)
 [![Minecraft](https://img.shields.io/badge/minecraft-1.20.1-brightgreen)](https://www.minecraft.net/)
 [![Forge](https://img.shields.io/badge/forge-47.4.10%2B-orange)](https://files.minecraftforge.net/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-> **Status: 0.9.1 — beta.** Core loop (catch → own → summon → work/fight/assist) is
+> **Status: 0.9.2 — beta.** Core loop (catch → own → summon → work/fight/assist) is
 > feature-complete and server-tested, now with a survival-pressure layer (tanky, self-healing
 > wild mobs; biome-distributed spawns; hunting nights) and a Pokéball-style catch animation. The
 > thrown sphere's 3D mesh renders client-side and still needs a visual pass on a real modded

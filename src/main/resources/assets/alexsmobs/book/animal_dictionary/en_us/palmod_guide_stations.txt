@@ -1,7 +1,11 @@
 <NEWLINE>
 <NEWLINE>
-Some Pals can run a Work Station. Sneak and use a station-type Pal on a block to place its station - the Pal appears and starts working.
+Craft a Pal Work Station and place it anywhere. It is a plain 27-slot chest: hoppers, comparators and your own hands all work on it.
+<NEWLINE>
+Some Pals have a job. Throw one out near its work and it starts on its own - no assignment needed.
 <NEWLINE>
 Jobs include Harvester, Lumberjack, Miner, Trader and Sorter.
 <NEWLINE>
-Right-click the station to collect what the Pal produced. Break it to get the Pal's sphere back.
+A working Pal carries what it gathers and hauls a full load to the NEAREST Work Station it can find. With none in range it simply holds onto the load.
+<NEWLINE>
+A worker Pal takes its sphere WITH it, so it keeps working while you are away. Right-click the Pal to call it back into its sphere. If it dies it drops an empty sphere where it fell, and breaking a station never harms it.

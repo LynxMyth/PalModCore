@@ -680,12 +680,22 @@ public class PalSphereProjectile extends ThrowableItemProjectile {
                 }
                 net.minecraft.world.entity.Entity entity = entityType.create(serverLevel);
                 if (entity instanceof LivingEntity livingEntity) {
+                    // Scrub Alex's Mobs hive-AI state: EntityLeafcutterAnt's flagless
+                    // ReturnToHiveGoal fires on hasLeaf()/HivePos and walks the pal
+                    // into an anthill (deleting it from the world) — an ant caught
+                    // mid-forage would abandon its owner and vanish.
+                    entityData = entityData.copy();
+                    entityData.remove("Leaf");
+                    entityData.remove("HivePos");
+                    entityData.remove("CannotEnterHiveTicks");
                     livingEntity.load(entityData);
                     livingEntity.setUUID(UUID.randomUUID());
-                    // An ex-station pal (station broken, sphere recovered) still
-                    // carries WorkStationPos in its saved ForgeData — stale here,
-                    // and it would get the pal auto-discarded by the orphan check
+                    // Legacy: a pre-0.9.3 station pal still carries WorkStationPos in
+                    // its saved ForgeData — stale here, and it would get the pal
+                    // auto-discarded by the orphan check
                     livingEntity.getPersistentData().remove("WorkStationPos");
+                    // A worker re-anchors its work area wherever it is thrown
+                    livingEntity.getPersistentData().remove("PalWorkHome");
                     livingEntity.setYRot(player.getYRot());
                     // Impact points sit on block faces — find a collision-free spot
                     com.mx.palmod.pal.SafeSpawn.place(serverLevel, livingEntity, location, player);
@@ -724,6 +734,16 @@ public class PalSphereProjectile extends ThrowableItemProjectile {
                     serverLevel.addFreshEntity(livingEntity);
                     tag.putBoolean("IsReleased", true);
                     tag.putUUID("EntityUUID", livingEntity.getUUID());
+
+                    if (summonBehavior.isStationMode()) {
+                        // Worker pals take their sphere with them: the item leaves
+                        // the player's inventory (creative included — keeping a
+                        // usable copy would duplicate the pal) and only comes back
+                        // by right-clicking the pal. That is what exempts them from
+                        // the orphan rule so a base keeps running unattended.
+                        com.mx.palmod.item.FilledPalSphereItem.attachCarriedSphere(livingEntity, tag);
+                        filledSphere.shrink(1);
+                    }
 
                     // Summon-time powers (warp_beacon, time_stop.on_summon, and
                     // anything a third-party mod registers) react to the fresh summon

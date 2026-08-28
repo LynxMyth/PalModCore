@@ -3,7 +3,7 @@
 <NEWLINE>
 PAL STATS - Health: 8 | Attack: 1
 <NEWLINE>
-PAL ABILITY - Trader. Place its Work Station, then drop payment items (emeralds) on the ground nearby. The crow converts them into goods stored at the station.
+PAL ABILITY - Trader. Throw it out, then drop payment items (emeralds) on the ground nearby. The crow converts them into goods and hauls them to the nearest Work Station.
 <NEWLINE>
 WILD VARIANT - Skittish. A wild catchable one flees the moment it sees or hears you. Sneak to quarter its detection range before throwing a sphere.
 <NEWLINE>

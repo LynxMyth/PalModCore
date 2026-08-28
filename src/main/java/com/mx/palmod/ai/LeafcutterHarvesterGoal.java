@@ -19,8 +19,8 @@ import java.util.List;
  */
 public class LeafcutterHarvesterGoal extends AbstractStationWorkerGoal {
 
-    public LeafcutterHarvesterGoal(Mob mob, BlockPos stationPos, int harvestRadius, int wanderRadius) {
-        super(mob, stationPos, harvestRadius, wanderRadius);
+    public LeafcutterHarvesterGoal(Mob mob, int harvestRadius, int wanderRadius) {
+        super(mob, harvestRadius, wanderRadius);
     }
 
     /** Crops it harvests are food for it — lets a starving ant work its way back up. */
@@ -44,7 +44,7 @@ public class LeafcutterHarvesterGoal extends AbstractStationWorkerGoal {
                 center.getX() - harvestRadius, center.getY() - 3, center.getZ() - harvestRadius,
                 center.getX() + harvestRadius, center.getY() + 3, center.getZ() + harvestRadius)) {
             // Constrain within wander radius of station too
-            if (!withinStationRange(pos)) continue;
+            if (!withinWorkRange(pos)) continue;
             if (isRipeCrop(level, pos)) {
                 double d = pos.distSqr(center);
                 if (d < bestDist) {

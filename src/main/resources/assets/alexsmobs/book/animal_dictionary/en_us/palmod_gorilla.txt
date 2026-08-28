@@ -3,7 +3,7 @@
 <NEWLINE>
 PAL STATS - Health: 30 | Attack: 7
 <NEWLINE>
-PAL ABILITY - Lumberjack. Use its filled sphere on the ground to place a Work Station. The gorilla fells whole trees around the station and deposits the logs into the output slot.
+PAL ABILITY - Lumberjack. Throw it out in a forest. The gorilla fells whole trees around the spot it landed and hauls the logs to the nearest Work Station.
 <NEWLINE>
 WILD VARIANT - Skittish. A wild catchable one flees the moment it sees or hears you. Sneak to quarter its detection range before throwing a sphere.
 <NEWLINE>

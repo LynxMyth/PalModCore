@@ -24,8 +24,8 @@ import java.util.List;
  */
 public class TraderGoal extends AbstractStationWorkerGoal {
 
-    public TraderGoal(Mob mob, BlockPos stationPos, int harvestRadius, int wanderRadius) {
-        super(mob, stationPos, harvestRadius, wanderRadius);
+    public TraderGoal(Mob mob, int harvestRadius, int wanderRadius) {
+        super(mob, harvestRadius, wanderRadius);
     }
 
     @Override
@@ -42,7 +42,7 @@ public class TraderGoal extends AbstractStationWorkerGoal {
         List<ItemEntity> payments = level.getEntitiesOfClass(ItemEntity.class,
                 mob.getBoundingBox().inflate(harvestRadius),
                 e -> e.isAlive() && e.getItem().is(table.getPayment())
-                        && withinStationRange(e.blockPosition()));
+                        && withinWorkRange(e.blockPosition()));
         return payments.stream()
                 .min(Comparator.comparingDouble(e -> e.distanceToSqr(mob)))
                 .map(ItemEntity::blockPosition)

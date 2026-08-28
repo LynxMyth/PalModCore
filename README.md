@@ -4,14 +4,15 @@
 
 **Quality-of-life creature companions for Minecraft — without the turns.**
 
-![Version](https://img.shields.io/badge/version-0.9.2-blue)
+![Version](https://img.shields.io/badge/version-0.9.3-blue)
 [![Minecraft](https://img.shields.io/badge/minecraft-1.20.1-brightgreen)](https://www.minecraft.net/)
 [![Forge](https://img.shields.io/badge/forge-47.4.10%2B-orange)](https://files.minecraftforge.net/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-> **Status: 0.9.2 — beta.** Core loop (catch → own → summon → work/fight/assist) is
+> **Status: 0.9.3 — beta.** Core loop (catch → own → summon → work/fight/assist) is
 > feature-complete and server-tested, now with a survival-pressure layer (tanky, self-healing
-> wild mobs; biome-distributed spawns; hunting nights) and a Pokéball-style catch animation. The
+> wild mobs; biome-distributed spawns; hunting nights), a Pokéball-style catch animation, and
+> station-free worker Pals that haul to any craftable Work Station. The
 > thrown sphere's 3D mesh renders client-side and still needs a visual pass on a real modded
 > client. A few systems remain flagged untested-in-game — see [Known Issues](#known-issues)
 > before reporting a bug.
@@ -135,8 +136,9 @@ they reveal themselves. No target in range = the needle spins.
 - **The Pal dies** → its sphere reverts to an empty sphere automatically. No re-catching a
   ghost.
 - **Orphan rule**: a released (summoned) Pal despawns if its sphere isn't in your hotbar or
-  offhand — you can't summon a Pal and then wander off without it. Exceptions: Pals bound to a
-  Work Station, deployed Pals (anchor/sentry), and anything you're currently riding.
+  offhand — you can't summon a Pal and then wander off without it. Exceptions: deployed Pals
+  (anchor/sentry), worker Pals (they carry their own sphere — see below), and anything you're
+  currently riding.
 
 ### Interacting with your Pal
 
@@ -168,13 +170,21 @@ the hungrier a Pal gets:
 
 ### Work Stations
 
-Place a **Pal Work Station**, then throw a station-mode Pal's sphere at it — the sphere is
-consumed and the Pal spawns bound to that station as a worker (lumberjack, harvester, trader,
-sorter, or miner, depending on the mob). It'll wander a configurable radius, do its job, and
-deposit results into the station's output slot (which you can hopper straight into storage).
-Right-click the station to collect manually. Break the station to get the sphere back; if the
-worker goes missing for too long, its sphere returns automatically instead of leaving an
-orphaned mob wandering the world.
+The **Pal Work Station** is craftable (planks + a chest + an iron ingot) and is a plain 27-slot
+chest — right-click to open it, hopper into or out of it, read it with a comparator, break it
+and get everything back.
+
+Pals with a job (lumberjack, harvester, trader, sorter, miner) don't need to be assigned to one.
+Throw such a Pal out where you want it working and it starts on its own, doing its job within a
+configurable radius of the spot it landed. When its arms fill up — or when there's nothing left
+to work — it walks to the **nearest** Work Station in range and unloads whatever it's carrying.
+With no station nearby it just holds onto the load until one shows up.
+
+**A worker Pal carries its own sphere.** Throwing it out consumes the sphere — it goes with the
+Pal — so the Pal stays at work whether or not you're nearby, and keeps going while you're
+logged out. To bring it back, **right-click the Pal itself** and it returns to its sphere in
+your hands. If a worker dies it drops an empty sphere where it fell, and breaking a station
+never harms it — it just delivers to the next nearest one.
 
 ### Powers & deploy modes
 

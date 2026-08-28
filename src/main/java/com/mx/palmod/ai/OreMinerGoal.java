@@ -24,8 +24,8 @@ public class OreMinerGoal extends AbstractStationWorkerGoal {
 
     private final TagKey<Block> oreTag;
 
-    public OreMinerGoal(Mob mob, BlockPos stationPos, int harvestRadius, int wanderRadius, String oreTagId) {
-        super(mob, stationPos, harvestRadius, wanderRadius);
+    public OreMinerGoal(Mob mob, int harvestRadius, int wanderRadius, String oreTagId) {
+        super(mob, harvestRadius, wanderRadius);
         this.oreTag = TagKey.create(Registries.BLOCK, new ResourceLocation(oreTagId));
     }
 
@@ -57,7 +57,7 @@ public class OreMinerGoal extends AbstractStationWorkerGoal {
         for (BlockPos pos : BlockPos.betweenClosed(
                 center.getX() - harvestRadius, center.getY() - 4, center.getZ() - harvestRadius,
                 center.getX() + harvestRadius, center.getY() + 4, center.getZ() + harvestRadius)) {
-            if (!withinStationRange(pos)) continue;
+            if (!withinWorkRange(pos)) continue;
             if (level.getBlockState(pos).is(oreTag) && isReachable(level, pos)) {
                 double d = pos.distSqr(center);
                 if (d < bestDist) {

@@ -1,241 +1,312 @@
 package com.mx.palmod.block;
 
-import com.mx.palmod.item.FilledPalSphereItem;
 import com.mx.palmod.registry.ModRegistries;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.SimpleContainer;
-import net.minecraft.world.entity.Entity;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.Container;
+import net.minecraft.world.ContainerHelper;
+import net.minecraft.world.WorldlyContainer;
+import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BaseContainerBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraftforge.common.capabilities.Capability;
 import net.minecraftforge.common.capabilities.ForgeCapabilities;
 import net.minecraftforge.common.util.LazyOptional;
 import net.minecraftforge.items.IItemHandler;
-import net.minecraftforge.items.ItemStackHandler;
+import net.minecraftforge.items.wrapper.InvWrapper;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import java.util.UUID;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
+import java.util.stream.IntStream;
 
-public class PalWorkStationBlockEntity extends BlockEntity {
+/**
+ * The Pal Work Station: a plain 27-slot chest that worker pals haul their
+ * produce to. Craftable, breakable, hopper-friendly, and bound to NOTHING —
+ * any worker pal picks the nearest one at deposit time.
+ *
+ * A static per-dimension index of loaded stations backs {@link #findNearest}
+ * so workers never have to brute-force scan for one. Entries are added in
+ * {@link #onLoad()} and dropped in {@link #setRemoved()} (which fires on chunk
+ * unload too — an unloaded station is unreachable anyway).
+ */
+public class PalWorkStationBlockEntity extends BaseContainerBlockEntity implements WorldlyContainer {
 
-    // 1 slot for harvested goods (max 64 of one item type)
-    private final ItemStackHandler itemHandler = new ItemStackHandler(1) {
-        @Override
-        public int getSlotLimit(int slot) {
-            return 64;
-        }
-    };
-    private final LazyOptional<IItemHandler> lazyItemHandler = LazyOptional.of(() -> itemHandler);
+    public static final int SLOTS = 27;
+    private static final int[] ALL_SLOTS = IntStream.range(0, SLOTS).toArray();
 
-    // NBT data of the original FilledPalSphere
-    private CompoundTag sphereNbt = new CompoundTag();
-    // UUID of the worker ant currently attached
-    @Nullable
-    private UUID workerEntityUUID = null;
-    // Grace period before declaring the worker dead: on (re)load the station's
-    // chunk can tick before the worker entity is loaded, and instantly breaking
-    // the station here would cascade into discarding the ant when it DOES load.
-    private int workerMissingTicks = 0;
-    private static final int WORKER_MISSING_GRACE_TICKS = 200;
-    // Last place the worker was seen. getEntity() only finds entities in loaded
-    // chunks — the station may block-tick while the worker's chunk is unloaded,
-    // and that must NOT count as "vanished" (it would dupe the pal).
-    @Nullable
-    private BlockPos lastWorkerPos = null;
+    private NonNullList<ItemStack> items = NonNullList.withSize(SLOTS, ItemStack.EMPTY);
+    private final LazyOptional<IItemHandler> lazyItemHandler = LazyOptional.of(() -> new InvWrapper(this));
+
+    // Loaded-station index (server side only)
+    private static final Map<ResourceKey<Level>, Set<BlockPos>> INDEX = new ConcurrentHashMap<>();
 
     public PalWorkStationBlockEntity(BlockPos pPos, BlockState pState) {
         super(ModRegistries.PAL_WORK_STATION_BLOCK_ENTITY.get(), pPos, pState);
     }
 
-    public void setSphereNbt(CompoundTag nbt) {
-        this.sphereNbt = nbt.copy();
-        setChanged();
-    }
+    // ──────────────────────────────────────────────────────────────
+    //  Station lookup
+    // ──────────────────────────────────────────────────────────────
 
-    public void setWorkerUUID(UUID uuid) {
-        this.workerEntityUUID = uuid;
-        setChanged();
-    }
-
-    /** Returns the item stored by the ant (harvested goods). */
-    public ItemStack getStoredItem() {
-        return itemHandler.getStackInSlot(0);
+    private static Set<BlockPos> index(ResourceKey<Level> dimension) {
+        return INDEX.computeIfAbsent(dimension, k -> ConcurrentHashMap.newKeySet());
     }
 
     /**
-     * Deposit an item into the station. Returns the leftover that couldn't fit.
+     * Nearest loaded work station to {@code from} within {@code maxDist} blocks
+     * that passes {@code filter} (null = any). Returns null when there is none.
+     */
+    @Nullable
+    public static BlockPos findNearest(Level level, BlockPos from, double maxDist,
+                                       @Nullable Predicate<PalWorkStationBlockEntity> filter) {
+        Set<BlockPos> stations = INDEX.get(level.dimension());
+        if (stations == null || stations.isEmpty()) return null;
+        double bestDist = maxDist * maxDist;
+        BlockPos best = null;
+        for (BlockPos pos : stations) {
+            double d = pos.distSqr(from);
+            if (d > bestDist) continue;
+            // The index can go stale (a removal we never saw) — always confirm
+            if (!level.isLoaded(pos)) continue;
+            if (!(level.getBlockEntity(pos) instanceof PalWorkStationBlockEntity station)) continue;
+            if (filter != null && !filter.test(station)) continue;
+            bestDist = d;
+            best = pos;
+        }
+        return best;
+    }
+
+    @Override
+    public void onLoad() {
+        super.onLoad();
+        if (level != null && !level.isClientSide) {
+            index(level.dimension()).add(worldPosition.immutable());
+        }
+    }
+
+    @Override
+    public void setRemoved() {
+        super.setRemoved();
+        lazyItemHandler.invalidate();
+        if (level != null && !level.isClientSide) {
+            index(level.dimension()).remove(worldPosition);
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Worker-facing helpers
+    // ──────────────────────────────────────────────────────────────
+
+    /**
+     * Insert a stack anywhere it fits (merge first, then empty slots).
+     * Returns the leftover that could not fit.
      */
     public ItemStack depositItem(ItemStack stack) {
-        ItemStack existing = itemHandler.getStackInSlot(0);
-        if (existing.isEmpty()) {
-            int toStore = Math.min(stack.getCount(), 64);
-            itemHandler.setStackInSlot(0, stack.copyWithCount(toStore));
-            stack.shrink(toStore);
-            setChanged();
-        } else if (ItemStack.isSameItemSameTags(existing, stack)) {
-            int space = 64 - existing.getCount();
-            if (space > 0) {
-                int toStore = Math.min(stack.getCount(), space);
-                existing.grow(toStore);
-                stack.shrink(toStore);
-                setChanged();
+        if (stack.isEmpty()) return ItemStack.EMPTY;
+        ItemStack remaining = stack.copy();
+        for (int pass = 0; pass < 2 && !remaining.isEmpty(); pass++) {
+            for (int i = 0; i < SLOTS && !remaining.isEmpty(); i++) {
+                ItemStack slot = items.get(i);
+                if (pass == 0) {
+                    if (slot.isEmpty() || !ItemStack.isSameItemSameTags(slot, remaining)) continue;
+                    int space = Math.min(slot.getMaxStackSize(), getMaxStackSize()) - slot.getCount();
+                    int moved = Math.min(space, remaining.getCount());
+                    if (moved <= 0) continue;
+                    slot.grow(moved);
+                    remaining.shrink(moved);
+                    setChanged();
+                } else if (slot.isEmpty()) {
+                    int moved = Math.min(remaining.getCount(),
+                            Math.min(remaining.getMaxStackSize(), getMaxStackSize()));
+                    items.set(i, remaining.copyWithCount(moved));
+                    remaining.shrink(moved);
+                    setChanged();
+                }
             }
         }
-        return stack;
+        return remaining;
     }
 
-    public boolean isFull() {
-        ItemStack s = itemHandler.getStackInSlot(0);
-        return !s.isEmpty() && s.getCount() >= 64;
-    }
-
-    /** Take up to count items out of the station (sorter withdrawing its input). */
-    public ItemStack extractStored(int count) {
-        ItemStack stored = itemHandler.getStackInSlot(0);
-        if (stored.isEmpty()) return ItemStack.EMPTY;
-        ItemStack taken = stored.split(count);
-        if (stored.isEmpty()) {
-            itemHandler.setStackInSlot(0, ItemStack.EMPTY);
+    /** True if at least one of {@code stack} fits. */
+    public boolean canAccept(ItemStack stack) {
+        if (stack.isEmpty()) return false;
+        for (int i = 0; i < SLOTS; i++) {
+            ItemStack slot = items.get(i);
+            if (slot.isEmpty()) return true;
+            if (ItemStack.isSameItemSameTags(slot, stack)
+                    && slot.getCount() < Math.min(slot.getMaxStackSize(), getMaxStackSize())) {
+                return true;
+            }
         }
-        setChanged();
+        return false;
+    }
+
+    /** No room left for anything at all. */
+    public boolean isFull() {
+        for (int i = 0; i < SLOTS; i++) {
+            ItemStack slot = items.get(i);
+            if (slot.isEmpty()) return false;
+            if (slot.getCount() < Math.min(slot.getMaxStackSize(), getMaxStackSize())) return false;
+        }
+        return true;
+    }
+
+    /** First slot holding an item matching {@code test}, or -1. */
+    public int findSlot(Predicate<ItemStack> test) {
+        for (int i = 0; i < SLOTS; i++) {
+            ItemStack slot = items.get(i);
+            if (!slot.isEmpty() && test.test(slot)) return i;
+        }
+        return -1;
+    }
+
+    /** Contents of the first non-empty slot (live reference — read only). */
+    public ItemStack getStoredItem() {
+        int slot = findSlot(s -> true);
+        return slot < 0 ? ItemStack.EMPTY : items.get(slot);
+    }
+
+    /** Take up to {@code count} items out of one slot. */
+    public ItemStack extractStored(int slot, int count) {
+        if (slot < 0 || slot >= SLOTS) return ItemStack.EMPTY;
+        return removeItem(slot, count);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Container
+    // ──────────────────────────────────────────────────────────────
+
+    @Override
+    public int getContainerSize() {
+        return SLOTS;
+    }
+
+    @Override
+    public boolean isEmpty() {
+        for (ItemStack stack : items) {
+            if (!stack.isEmpty()) return false;
+        }
+        return true;
+    }
+
+    @Override
+    public ItemStack getItem(int pSlot) {
+        return items.get(pSlot);
+    }
+
+    @Override
+    public ItemStack removeItem(int pSlot, int pAmount) {
+        ItemStack taken = ContainerHelper.removeItem(items, pSlot, pAmount);
+        if (!taken.isEmpty()) setChanged();
         return taken;
     }
 
-    public void serverTick(Level level, BlockPos pos, BlockState state) {
-        if (!(level instanceof ServerLevel serverLevel)) return;
-
-        // Check if worker is alive
-        if (workerEntityUUID != null) {
-            Entity worker = serverLevel.getEntity(workerEntityUUID);
-            if (worker != null && worker.isAlive()) {
-                lastWorkerPos = worker.blockPosition();
-                workerMissingTicks = 0;
-            } else if (lastWorkerPos != null && !serverLevel.isPositionEntityTicking(lastWorkerPos)) {
-                // The worker's chunk isn't entity-ticking — it may simply be
-                // unloaded out there. Hold the counter instead of counting down
-                // to a false "vanished" verdict.
-            } else if (++workerMissingTicks >= WORKER_MISSING_GRACE_TICKS) {
-                // Worker VANISHED without a confirmed death (hive AI swallowed
-                // it, despawn, unloaded-chunk kill...). Return the FILLED
-                // sphere so the pal itself isn't lost; a confirmed death goes
-                // through onWorkerDied() and drops an empty sphere instead.
-                ItemStack sphere;
-                if (sphereNbt.contains("CapturedEntity")) {
-                    CompoundTag returned = sphereNbt.copy();
-                    returned.putBoolean("IsReleased", false);
-                    returned.remove("EntityUUID");
-                    sphere = new ItemStack(ModRegistries.FILLED_PAL_SPHERE.get());
-                    sphere.setTag(returned);
-                } else {
-                    sphere = new ItemStack(ModRegistries.PAL_SPHERE.get());
-                }
-                breakAndDrop(serverLevel, pos, sphere);
-                return;
-            }
-        }
-
-        // Push items to hopper below
-        BlockPos below = pos.below();
-        BlockEntity belowBe = serverLevel.getBlockEntity(below);
-        if (belowBe != null) {
-            belowBe.getCapability(ForgeCapabilities.ITEM_HANDLER, Direction.UP).ifPresent(handler -> {
-                ItemStack stored = itemHandler.getStackInSlot(0);
-                if (!stored.isEmpty()) {
-                    for (int i = 0; i < handler.getSlots(); i++) {
-                        ItemStack remaining = handler.insertItem(i, stored.copyWithCount(1), false);
-                        if (remaining.isEmpty()) {
-                            stored.shrink(1);
-                            if (stored.isEmpty()) {
-                                itemHandler.setStackInSlot(0, ItemStack.EMPTY);
-                            }
-                            setChanged();
-                            break;
-                        }
-                    }
-                }
-            });
-        }
+    @Override
+    public ItemStack removeItemNoUpdate(int pSlot) {
+        return ContainerHelper.takeItem(items, pSlot);
     }
 
-    /** Confirmed worker death (from onLivingDeath): pal death reverts to an EMPTY sphere. */
-    public void onWorkerDied(ServerLevel serverLevel, BlockPos pos) {
-        breakAndDrop(serverLevel, pos, new ItemStack(ModRegistries.PAL_SPHERE.get()));
+    @Override
+    public void setItem(int pSlot, ItemStack pStack) {
+        items.set(pSlot, pStack);
+        if (pStack.getCount() > getMaxStackSize()) {
+            pStack.setCount(getMaxStackSize());
+        }
+        setChanged();
     }
 
-    /** Drops the given sphere + any stored produce, then removes the station block. */
-    private void breakAndDrop(ServerLevel serverLevel, BlockPos pos, ItemStack sphere) {
-        net.minecraft.world.entity.item.ItemEntity drop = new net.minecraft.world.entity.item.ItemEntity(
-                serverLevel, pos.getX() + 0.5, pos.getY() + 1.0, pos.getZ() + 0.5, sphere);
-        serverLevel.addFreshEntity(drop);
-        ItemStack stored = itemHandler.getStackInSlot(0);
-        if (!stored.isEmpty()) {
-            net.minecraft.world.entity.item.ItemEntity drop2 = new net.minecraft.world.entity.item.ItemEntity(
-                    serverLevel, pos.getX() + 0.5, pos.getY() + 1.0, pos.getZ() + 0.5, stored.copy());
-            serverLevel.addFreshEntity(drop2);
-        }
-        serverLevel.removeBlock(pos, false);
+    @Override
+    public boolean stillValid(Player pPlayer) {
+        return Container.stillValidBlockEntity(this, pPlayer);
     }
 
-    /** Called when the block is broken by a player - returns the filled sphere. */
-    public void onBreak(ServerLevel serverLevel, BlockPos pos, Player player) {
-        // Recall the ant
-        if (workerEntityUUID != null) {
-            Entity worker = serverLevel.getEntity(workerEntityUUID);
-            if (worker != null && worker.isAlive()) {
-                // Save ant data back into sphere NBT
-                CompoundTag entityData = new CompoundTag();
-                if (worker.saveAsPassenger(entityData)) {
-                    sphereNbt.put("CapturedEntity", entityData);
-                }
-                sphereNbt.putBoolean("IsReleased", false);
-                worker.discard();
-            }
-        }
+    @Override
+    public void clearContent() {
+        items.clear();
+        setChanged();
+    }
 
-        // Drop the sphere with ant data
-        ItemStack sphere = new ItemStack(ModRegistries.FILLED_PAL_SPHERE.get());
-        sphere.setTag(sphereNbt.copy());
-        net.minecraft.world.entity.item.ItemEntity drop = new net.minecraft.world.entity.item.ItemEntity(
-                serverLevel, pos.getX() + 0.5, pos.getY() + 1.0, pos.getZ() + 0.5, sphere);
-        drop.setNoPickUpDelay();
-        serverLevel.addFreshEntity(drop);
+    // Hoppers may push in / pull out through every face
+    @Override
+    public int[] getSlotsForFace(Direction pSide) {
+        return ALL_SLOTS;
+    }
 
-        // Drop harvested goods
-        ItemStack stored = itemHandler.getStackInSlot(0);
-        if (!stored.isEmpty()) {
-            net.minecraft.world.entity.item.ItemEntity drop2 = new net.minecraft.world.entity.item.ItemEntity(
-                    serverLevel, pos.getX() + 0.5, pos.getY() + 1.0, pos.getZ() + 0.5, stored.copy());
-            serverLevel.addFreshEntity(drop2);
-        }
+    @Override
+    public boolean canPlaceItemThroughFace(int pIndex, ItemStack pStack, @Nullable Direction pDirection) {
+        return true;
+    }
+
+    @Override
+    public boolean canTakeItemThroughFace(int pIndex, ItemStack pStack, Direction pDirection) {
+        return true;
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Menu / persistence / caps
+    // ──────────────────────────────────────────────────────────────
+
+    @Override
+    protected Component getDefaultName() {
+        return Component.translatable("block.palmod.pal_work_station");
+    }
+
+    @Override
+    protected AbstractContainerMenu createMenu(int pContainerId, Inventory pInventory) {
+        return ChestMenu.threeRows(pContainerId, pInventory, this);
     }
 
     @Override
     protected void saveAdditional(CompoundTag pTag) {
         super.saveAdditional(pTag);
-        pTag.put("Inventory", itemHandler.serializeNBT());
-        pTag.put("SphereNbt", sphereNbt);
-        if (workerEntityUUID != null) {
-            pTag.putUUID("WorkerUUID", workerEntityUUID);
-        }
-        if (lastWorkerPos != null) {
-            pTag.putLong("LastWorkerPos", lastWorkerPos.asLong());
-        }
+        ContainerHelper.saveAllItems(pTag, items);
     }
 
     @Override
     public void load(CompoundTag pTag) {
         super.load(pTag);
-        if (pTag.contains("Inventory")) itemHandler.deserializeNBT(pTag.getCompound("Inventory"));
-        if (pTag.contains("SphereNbt")) sphereNbt = pTag.getCompound("SphereNbt");
-        if (pTag.hasUUID("WorkerUUID")) workerEntityUUID = pTag.getUUID("WorkerUUID");
-        if (pTag.contains("LastWorkerPos")) lastWorkerPos = BlockPos.of(pTag.getLong("LastWorkerPos"));
+        items = NonNullList.withSize(SLOTS, ItemStack.EMPTY);
+        ContainerHelper.loadAllItems(pTag, items);
+        migrateLegacy(pTag);
+    }
+
+    /**
+     * Pre-0.9.3 stations were single-slot and held the bound worker's sphere
+     * NBT. Fold both into the new chest so existing worlds keep their produce
+     * and get the bound pal back as an ordinary filled sphere.
+     */
+    private void migrateLegacy(CompoundTag pTag) {
+        if (pTag.contains("Inventory")) {
+            ListTag legacyItems = pTag.getCompound("Inventory").getList("Items", 10);
+            for (int i = 0; i < legacyItems.size(); i++) {
+                depositItem(ItemStack.of(legacyItems.getCompound(i)));
+            }
+        }
+        if (pTag.contains("SphereNbt")) {
+            CompoundTag sphereNbt = pTag.getCompound("SphereNbt");
+            if (sphereNbt.contains("CapturedEntity")) {
+                CompoundTag returned = sphereNbt.copy();
+                returned.putBoolean("IsReleased", false);
+                returned.remove("EntityUUID");
+                ItemStack sphere = new ItemStack(ModRegistries.FILLED_PAL_SPHERE.get());
+                sphere.setTag(returned);
+                depositItem(sphere);
+            }
+        }
     }
 
     @Nonnull

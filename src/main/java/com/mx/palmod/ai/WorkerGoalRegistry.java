@@ -2,7 +2,6 @@ package com.mx.palmod.ai;
 
 import com.mojang.logging.LogUtils;
 import com.mx.palmod.behavior.PalBehavior;
-import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.ai.goal.Goal;
 import org.slf4j.Logger;
@@ -22,22 +21,22 @@ public final class WorkerGoalRegistry {
 
     @FunctionalInterface
     public interface Factory {
-        Goal create(Mob mob, BlockPos stationPos, PalBehavior behavior);
+        Goal create(Mob mob, PalBehavior behavior);
     }
 
     private static final Map<String, Factory> FACTORIES = new HashMap<>();
 
     static {
-        register("harvester", (mob, stationPos, behavior) -> new LeafcutterHarvesterGoal(
-                mob, stationPos, behavior.getHarvestRadius(), behavior.getWanderRadius()));
-        register("lumberjack", (mob, stationPos, behavior) -> new TreeFellerGoal(
-                mob, stationPos, behavior.getHarvestRadius(), behavior.getWanderRadius(), behavior.getLogCap()));
-        register("trader", (mob, stationPos, behavior) -> new TraderGoal(
-                mob, stationPos, behavior.getHarvestRadius(), behavior.getWanderRadius()));
-        register("sorter", (mob, stationPos, behavior) -> new SorterGoal(
-                mob, stationPos, behavior.getHarvestRadius(), behavior.getWanderRadius()));
-        register("miner", (mob, stationPos, behavior) -> new OreMinerGoal(
-                mob, stationPos, behavior.getHarvestRadius(), behavior.getWanderRadius(), behavior.getOreTag()));
+        register("harvester", (mob, behavior) -> new LeafcutterHarvesterGoal(
+                mob, behavior.getHarvestRadius(), behavior.getWanderRadius()));
+        register("lumberjack", (mob, behavior) -> new TreeFellerGoal(
+                mob, behavior.getHarvestRadius(), behavior.getWanderRadius(), behavior.getLogCap()));
+        register("trader", (mob, behavior) -> new TraderGoal(
+                mob, behavior.getHarvestRadius(), behavior.getWanderRadius()));
+        register("sorter", (mob, behavior) -> new SorterGoal(
+                mob, behavior.getHarvestRadius(), behavior.getWanderRadius()));
+        register("miner", (mob, behavior) -> new OreMinerGoal(
+                mob, behavior.getHarvestRadius(), behavior.getWanderRadius(), behavior.getOreTag()));
     }
 
     private WorkerGoalRegistry() {}
@@ -46,13 +45,13 @@ public final class WorkerGoalRegistry {
         FACTORIES.put(workerType, factory);
     }
 
-    public static Goal create(String workerType, Mob mob, BlockPos stationPos, PalBehavior behavior) {
+    public static Goal create(String workerType, Mob mob, PalBehavior behavior) {
         Factory factory = FACTORIES.get(workerType);
         if (factory == null) {
             LOGGER.warn("Unknown station worker_type '{}' for {}, falling back to 'harvester'",
                     workerType, mob.getType());
             factory = FACTORIES.get("harvester");
         }
-        return factory.create(mob, stationPos, behavior);
+        return factory.create(mob, behavior);
     }
 }

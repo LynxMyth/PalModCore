@@ -125,18 +125,10 @@ public class ForgeEvents {
 
             PalBehavior stationBehavior = PalBehaviorManager.getBehavior(mob.getType());
 
-            // Station mode: the pal works at a fixed station, job chosen by worker_type.
-            // Checked independently of PalOwner — station pals may have lost their owner
-            // tag (e.g. after a recall/summon cycle) but must keep working after reload.
-            if (stationBehavior.isStationMode() && mob.getPersistentData().contains("WorkStationPos")) {
-                net.minecraft.core.BlockPos stationPos = net.minecraft.core.BlockPos.of(
-                        mob.getPersistentData().getLong("WorkStationPos"));
-                mob.goalSelector.addGoal(1, com.mx.palmod.ai.WorkerGoalRegistry.create(
-                        stationBehavior.getStationWorkerType(), mob, stationPos, stationBehavior));
-                // Still add feeder-seeking even for station workers
-                mob.goalSelector.addGoal(0, new PalSeekFeederGoal(mob));
-                return; // Don't add normal Pal goals for station workers
-            }
+            // Legacy: pre-0.9.3 workers were bound to one station block. Stations
+            // are plain chests now — drop the stale binding so the pal is treated
+            // like any other summoned pal.
+            mob.getPersistentData().remove("WorkStationPos");
 
             // Special deployments (sneak-throw): rooted pals with their own goal set
             String deployMode = mob.getPersistentData().getString("DeployMode");
@@ -170,6 +162,13 @@ public class ForgeEvents {
 
                 // Feeder-seeking goal — highest priority for all Pals
                 mob.goalSelector.addGoal(0, new PalSeekFeederGoal(mob));
+
+                // Worker pals (station_mode) do their job wherever they are and
+                // haul produce to whichever Pal Work Station is nearest.
+                if (behavior.isStationMode()) {
+                    mob.goalSelector.addGoal(1, com.mx.palmod.ai.WorkerGoalRegistry.create(
+                            behavior.getStationWorkerType(), mob, behavior));
+                }
 
                 // (sit/stand toggle removed — pals no longer sit)
 
@@ -259,7 +258,7 @@ public class ForgeEvents {
             if (event.getHand() == net.minecraft.world.InteractionHand.MAIN_HAND
                     && entity instanceof Mob stationMob
                     && stationMob.getPersistentData().hasUUID("PalOwner")
-                    && stationMob.getPersistentData().contains("WorkStationPos")
+                    && PalBehaviorManager.getBehavior(stationMob.getType()).isStationMode()
                     && stationMob.getPersistentData().getUUID("PalOwner").equals(player.getUUID())) {
                 net.minecraft.world.item.ItemStack stationHeld = player.getMainHandItem();
                 if (!stationHeld.isEmpty() && PalStats.getHunger(stationMob) < PalStats.MAX_HUNGER
@@ -278,9 +277,33 @@ public class ForgeEvents {
                 }
             }
 
+            // ── Worker pals carry their OWN sphere, so there is no sphere in the
+            // inventory to right-click: a plain click on the pal puts it back
+            // into its sphere and hands that to the owner ──
+            if (event.getHand() == net.minecraft.world.InteractionHand.MAIN_HAND
+                    && !player.isShiftKeyDown()
+                    && entity instanceof Mob workerMob
+                    && workerMob.getPersistentData().hasUUID("PalOwner")
+                    && com.mx.palmod.item.FilledPalSphereItem.carriesOwnSphere(workerMob)
+                    && workerMob.getPersistentData().getUUID("PalOwner").equals(player.getUUID())
+                    && player.level() instanceof net.minecraft.server.level.ServerLevel workerLevel) {
+                String workerName = workerMob.getName().getString();
+                net.minecraft.world.item.ItemStack sphere =
+                        com.mx.palmod.item.FilledPalSphereItem.recallCarriedSphere(workerLevel, workerMob);
+                if (!sphere.isEmpty()) {
+                    if (!player.getInventory().add(sphere)) {
+                        player.drop(sphere, false);
+                    }
+                    player.displayClientMessage(net.minecraft.network.chat.Component.literal(
+                            workerName + " returned to its sphere."), true);
+                }
+                event.setCanceled(true);
+                event.setCancellationResult(net.minecraft.world.InteractionResult.SUCCESS);
+                return;
+            }
+
             if (event.getHand() == net.minecraft.world.InteractionHand.MAIN_HAND
                     && entity instanceof Mob mob && mob.getPersistentData().contains("PalOwner")
-                    && !mob.getPersistentData().contains("WorkStationPos")
                     && mob.getPersistentData().getString("DeployMode").isEmpty()) {
                 UUID ownerId = mob.getPersistentData().getUUID("PalOwner");
                 if (ownerId.equals(player.getUUID())) {
@@ -492,7 +515,7 @@ public class ForgeEvents {
         if (data.getBoolean("HuntNightSpawned") && !isPal
                 && !com.mx.palmod.hunt.HuntingNightManager.isActive()) {
             boolean tamed = entity instanceof net.minecraft.world.entity.TamableAnimal ta && ta.isTame();
-            boolean palBound = data.contains("SphereUUID") || data.contains("WorkStationPos");
+            boolean palBound = data.contains("SphereUUID");
             if (!tamed && !palBound) {
                 entity.discard();
                 return;
@@ -551,21 +574,12 @@ public class ForgeEvents {
 
         // ── Orphan & Dynamic Ownership check ───────────────────
         if (data.contains("SphereUUID")) {
-            boolean isStationPal = data.contains("WorkStationPos");
-            if (isStationPal) {
-                // Station pals belong to the workstation. Check if workstation still exists.
-                net.minecraft.core.BlockPos pos = net.minecraft.core.BlockPos.of(data.getLong("WorkStationPos"));
-                if (entity.level().isLoaded(pos)) {
-                    net.minecraft.world.level.block.entity.BlockEntity be = entity.level().getBlockEntity(pos);
-                    if (!(be instanceof com.mx.palmod.block.PalWorkStationBlockEntity)) {
-                        entity.discard();
-                    }
-                }
-                // Station pals keep PalOwner: goal injection never gives them follow
-                // goals, and PalSeekFeederGoal needs the owner tag to stay functional.
-            } else if (!data.getString("DeployMode").isEmpty()) {
+            if (!data.getString("DeployMode").isEmpty()
+                    || com.mx.palmod.item.FilledPalSphereItem.carriesOwnSphere(entity)) {
                 // Anchored/sentry pals stay deployed while their sphere is stashed
-                // anywhere in the owner's inventory — deliberate recall brings them back.
+                // anywhere in the owner's inventory — deliberate recall brings them
+                // back. Worker pals HOLD their own sphere, so there is nothing in
+                // an inventory to look for: they persist until recalled or killed.
             } else {
                 UUID sphereId = data.getUUID("SphereUUID");
                 Player currentHolder = null;
@@ -701,22 +715,19 @@ public class ForgeEvents {
                         new com.mx.palmod.api.event.PalDiedEvent(
                                 entity, entity.getPersistentData().getUUID("PalOwner")));
             }
-            boolean isStationPal = entity.getPersistentData().contains("WorkStationPos");
-            if (isStationPal) {
-                // Confirmed death: break the station right away with an EMPTY
-                // sphere (the BE's missing-worker grace path is for the pal
-                // VANISHING and returns a filled sphere instead).
-                net.minecraft.core.BlockPos stationPos = net.minecraft.core.BlockPos.of(
-                        entity.getPersistentData().getLong("WorkStationPos"));
-                if (entity.level() instanceof net.minecraft.server.level.ServerLevel stationLevel
-                        && stationLevel.isLoaded(stationPos)
-                        && stationLevel.getBlockEntity(stationPos)
-                                instanceof com.mx.palmod.block.PalWorkStationBlockEntity station) {
-                    station.onWorkerDied(stationLevel, stationPos);
+            if (com.mx.palmod.item.FilledPalSphereItem.carriesOwnSphere(entity)) {
+                // The sphere travelled with the pal — it drops where the pal fell,
+                // empty (a dead pal never comes back inside its sphere)
+                entity.getPersistentData().remove(
+                        com.mx.palmod.item.FilledPalSphereItem.KEY_CARRIED_SPHERE);
+                if (entity.level() instanceof net.minecraft.server.level.ServerLevel deathLevel) {
+                    net.minecraft.world.level.block.Block.popResource(deathLevel, entity.blockPosition(),
+                            new net.minecraft.world.item.ItemStack(
+                                    com.mx.palmod.registry.ModRegistries.PAL_SPHERE.get()));
                 }
                 return;
             }
-            
+
             if (entity.getPersistentData().contains("PalOwner")) {
                 UUID ownerId = entity.getPersistentData().getUUID("PalOwner");
                 Player owner = entity.level().getPlayerByUUID(ownerId);

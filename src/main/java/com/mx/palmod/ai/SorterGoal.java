@@ -12,12 +12,15 @@ import net.minecraftforge.items.IItemHandler;
 import net.minecraftforge.items.ItemHandlerHelper;
 
 import javax.annotation.Nullable;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * The "sorter" station worker (built for the raccoon): the station is an INPUT
- * buffer (hopper-feed it mixed items); the raccoon grabs the stored stack and
- * carries it to a nearby container that already holds the same item — a living
- * item-sorting system. Items no container "wants" stay in the station.
+ * The "sorter" station worker (built for the raccoon): a work station is an
+ * INPUT buffer (hopper-feed it mixed items); the raccoon grabs a stack out of
+ * the nearest one and carries it to a nearby container that already holds the
+ * same item — a living item-sorting system. Items no container "wants" stay in
+ * the station.
  */
 public class SorterGoal extends AbstractStationWorkerGoal {
 
@@ -27,51 +30,63 @@ public class SorterGoal extends AbstractStationWorkerGoal {
     @Nullable
     private BlockPos destination = null;
 
-    public SorterGoal(Mob mob, BlockPos stationPos, int harvestRadius, int wanderRadius) {
-        super(mob, stationPos, harvestRadius, wanderRadius);
+    public SorterGoal(Mob mob, int harvestRadius, int wanderRadius) {
+        super(mob, harvestRadius, wanderRadius);
     }
 
     @Override
     protected boolean isValidTarget(ServerLevel level, BlockPos pos) {
-        // The only work target is the station itself with something to sort
-        return pos.equals(stationPos) && hasSortableInput(level);
+        return sortableSlot(level, pos) >= 0;
     }
 
     @Nullable
     @Override
     protected BlockPos findTarget(ServerLevel level) {
-        if (!hasSortableInput(level)) return null;
-        return stationPos;
+        // The work target is the nearest station holding something sortable
+        return PalWorkStationBlockEntity.findNearest(level, mob.blockPosition(), wanderRadius,
+                station -> sortableSlot(level, station.getBlockPos()) >= 0);
     }
 
     @Override
     protected void doWork(ServerLevel level, BlockPos pos) {
-        BlockEntity be = level.getBlockEntity(stationPos);
-        if (!(be instanceof PalWorkStationBlockEntity station)) return;
+        if (!(level.getBlockEntity(pos) instanceof PalWorkStationBlockEntity station)) return;
 
-        ItemStack stored = station.getStoredItem();
-        if (stored.isEmpty()) return;
+        int slot = sortableSlot(level, pos);
+        if (slot < 0) return;
 
-        BlockPos dest = findDestinationFor(level, stored);
+        BlockPos dest = findDestinationFor(scanContainers(level, pos), pos, station.getItem(slot));
         if (dest == null) return;
 
-        ItemStack taken = station.extractStored(CARRY_SIZE);
+        ItemStack taken = station.extractStored(slot, CARRY_SIZE);
         if (taken.isEmpty()) return;
 
+        ItemStack leftover = pickupItem(taken);
+        if (!leftover.isEmpty()) {
+            // Arms already full of something else — put it straight back
+            station.depositItem(leftover);
+            return;
+        }
         this.destination = dest;
-        pickupItem(taken);
         chargeHunger("sort", 1.0f);
     }
 
     @Override
-    protected boolean waitsWhenStationFull() {
-        // The station is our INPUT buffer — full means there's work to do
+    protected boolean selfFeedsFromStation() {
+        // A station is our INPUT buffer — full means there's work to do, and our
+        // load belongs to the player, so never self-feed from it
         return false;
     }
 
+    /** A picked-up load is always addressed to one container — deliver it now. */
     @Override
-    protected BlockPos depositPos() {
-        return destination != null ? destination : stationPos;
+    protected boolean mustUnloadNow() {
+        return destination != null;
+    }
+
+    @Nullable
+    @Override
+    protected BlockPos depositPos(ServerLevel level) {
+        return destination != null ? destination : super.depositPos(level);
     }
 
     @Override
@@ -81,32 +96,53 @@ public class SorterGoal extends AbstractStationWorkerGoal {
 
     // ──────────────────────────────────────────────────────────────
 
-    private boolean hasSortableInput(ServerLevel level) {
-        BlockEntity be = level.getBlockEntity(stationPos);
-        if (!(be instanceof PalWorkStationBlockEntity station)) return false;
-        ItemStack stored = station.getStoredItem();
-        return !stored.isEmpty() && findDestinationFor(level, stored) != null;
+    /** First slot in the station whose contents some nearby container wants. */
+    private int sortableSlot(ServerLevel level, BlockPos stationPos) {
+        if (!(level.getBlockEntity(stationPos) instanceof PalWorkStationBlockEntity station)) return -1;
+        if (station.isEmpty()) return -1;
+        List<Target> containers = scanContainers(level, stationPos);
+        if (containers.isEmpty()) return -1;
+        return station.findSlot(stack -> findDestinationFor(containers, stationPos, stack) != null);
     }
 
+    /** A candidate destination container found by {@link #scanContainers}. */
+    private record Target(BlockPos pos, IItemHandler handler) {}
+
     /**
-     * Finds a nearby container that already holds the same item and has room —
-     * "put it where its kind already lives".
+     * Every container in range that could receive sorted items. Scanned once per
+     * probe — the per-slot destination test then runs against this list instead
+     * of re-walking the whole box for all 27 station slots.
      */
-    @Nullable
-    private BlockPos findDestinationFor(ServerLevel level, ItemStack item) {
-        BlockPos best = null;
-        double bestDist = Double.MAX_VALUE;
+    private List<Target> scanContainers(ServerLevel level, BlockPos stationPos) {
+        List<Target> found = new ArrayList<>();
         for (BlockPos pos : BlockPos.betweenClosed(
                 stationPos.getX() - harvestRadius, stationPos.getY() - 2, stationPos.getZ() - harvestRadius,
                 stationPos.getX() + harvestRadius, stationPos.getY() + 2, stationPos.getZ() + harvestRadius)) {
-            // Skip the station itself and the drain hopper directly below it —
+            // Skip the source station and the drain hopper directly below it —
             // the hopper always holds the same item and would swallow everything
             if (pos.equals(stationPos) || pos.equals(stationPos.below())) continue;
             BlockEntity be = level.getBlockEntity(pos);
             if (be == null || be instanceof PalWorkStationBlockEntity || be instanceof PalFeederBlockEntity) continue;
             IItemHandler handler = be.getCapability(ForgeCapabilities.ITEM_HANDLER).resolve().orElse(null);
             if (handler == null) continue;
+            found.add(new Target(pos.immutable(), handler));
+        }
+        return found;
+    }
 
+    /**
+     * Finds the nearest scanned container that already holds the same item and
+     * has room — "put it where its kind already lives".
+     */
+    @Nullable
+    private BlockPos findDestinationFor(List<Target> containers, BlockPos stationPos, ItemStack item) {
+        if (item.isEmpty()) return null;
+        BlockPos best = null;
+        double bestDist = Double.MAX_VALUE;
+        for (Target target : containers) {
+            double d = target.pos().distSqr(stationPos);
+            if (d >= bestDist) continue;
+            IItemHandler handler = target.handler();
             boolean containsSame = false;
             for (int i = 0; i < handler.getSlots(); i++) {
                 if (ItemStack.isSameItemSameTags(handler.getStackInSlot(i), item)) {
@@ -115,16 +151,10 @@ public class SorterGoal extends AbstractStationWorkerGoal {
                 }
             }
             if (!containsSame) continue;
-
             // Must actually have room for at least one item
-            ItemStack leftover = ItemHandlerHelper.insertItemStacked(handler, item.copyWithCount(1), true);
-            if (!leftover.isEmpty()) continue;
-
-            double d = pos.distSqr(stationPos);
-            if (d < bestDist) {
-                bestDist = d;
-                best = pos.immutable();
-            }
+            if (!ItemHandlerHelper.insertItemStacked(handler, item.copyWithCount(1), true).isEmpty()) continue;
+            bestDist = d;
+            best = target.pos();
         }
         return best;
     }

@@ -3,7 +3,7 @@
 <NEWLINE>
 PAL STATS - Health: 9 | Attack: 2
 <NEWLINE>
-PAL ABILITY - Sorter. Place its Work Station among your chests. The raccoon empties the station buffer and sorts items into nearby containers that already hold the same item.
+PAL ABILITY - Sorter. Put a Work Station among your chests and throw the raccoon out beside it. It empties the station and sorts items into nearby containers that already hold the same item.
 <NEWLINE>
 WILD VARIANT - Skittish. A wild catchable one flees the moment it sees or hears you. Sneak to quarter its detection range before throwing a sphere.
 <NEWLINE>

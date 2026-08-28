@@ -137,21 +137,7 @@ public class FilledPalSphereItem extends Item {
                 return InteractionResult.SUCCESS;
             }
 
-            CompoundTag entityData = tag.getCompound("CapturedEntity");
-            Optional<EntityType<?>> optionalType = EntityType.by(entityData);
-            if (optionalType.isPresent()) {
-                EntityType<?> entityType = optionalType.get();
-                com.mx.palmod.behavior.PalBehavior behavior = com.mx.palmod.behavior.PalBehaviorManager.getBehavior(entityType);
-
-                if (behavior.isStationMode()) {
-                    BlockPos blockpos = pContext.getClickedPos();
-                    Direction direction = pContext.getClickedFace();
-                    BlockPos spawnPos = blockpos.relative(direction);
-                    return placeWorkStation(pContext, serverLevel, itemStack, tag, entityData, entityType, spawnPos, behavior);
-                }
-            }
-
-            // Inside-pal, non-station: summon-throw right here. A modded client
+            // Inside-pal: summon-throw right here. A modded client
             // consumes the click in its own useOn, so the server-side use()
             // fall-through this used to rely on never happens there.
             if (pContext.getPlayer() != null) {
@@ -161,88 +147,6 @@ public class FilledPalSphereItem extends Item {
         }
 
         return InteractionResult.PASS; // Allow use() to handle throwing
-    }
-
-    private InteractionResult placeWorkStation(UseOnContext pContext, ServerLevel serverLevel,
-            ItemStack itemStack, CompoundTag tag, CompoundTag entityData,
-            EntityType<?> entityType, BlockPos spawnPos,
-            com.mx.palmod.behavior.PalBehavior behavior) {
-
-        // Check the block at spawnPos is replaceable
-        net.minecraft.world.level.block.state.BlockState stateAtPos = serverLevel.getBlockState(spawnPos);
-        if (!stateAtPos.isAir() && !stateAtPos.canBeReplaced()) {
-            return InteractionResult.FAIL;
-        }
-
-        // Place the work station block
-        net.minecraft.world.level.block.state.BlockState stationState = com.mx.palmod.registry.ModRegistries.PAL_WORK_STATION.get().defaultBlockState();
-        serverLevel.setBlock(spawnPos, stationState, 3);
-
-        // Configure the block entity
-        net.minecraft.world.level.block.entity.BlockEntity be = serverLevel.getBlockEntity(spawnPos);
-        if (!(be instanceof com.mx.palmod.block.PalWorkStationBlockEntity station)) {
-            serverLevel.removeBlock(spawnPos, false);
-            return InteractionResult.FAIL;
-        }
-        station.setSphereNbt(tag.copy());
-
-        // Spawn the ant entity — NOT inside the station block we just placed
-        Entity entity = entityType.create(serverLevel);
-        if (entity instanceof LivingEntity livingEntity) {
-            // Scrub Alex's Mobs hive-AI state: EntityLeafcutterAnt's flagless
-            // ReturnToHiveGoal fires on hasLeaf()/HivePos and walks the worker
-            // into an anthill (deleting it from the world) — an ant captured
-            // mid-forage would abandon the station and vanish.
-            entityData = entityData.copy();
-            entityData.remove("Leaf");
-            entityData.remove("HivePos");
-            entityData.remove("CannotEnterHiveTicks");
-            livingEntity.load(entityData);
-            livingEntity.setUUID(UUID.randomUUID());
-            com.mx.palmod.pal.SafeSpawn.place(serverLevel, livingEntity,
-                    new net.minecraft.world.phys.Vec3(spawnPos.getX() + 0.5, spawnPos.getY() + 1.0, spawnPos.getZ() + 0.5),
-                    pContext.getPlayer());
-            if (livingEntity.getCustomName() == null) {
-                livingEntity.setCustomName(entityType.getDescription().copy());
-            }
-            livingEntity.setCustomNameVisible(true);
-
-            Player player = pContext.getPlayer();
-            if (player != null) {
-                livingEntity.getPersistentData().putUUID("PalOwner", player.getUUID());
-            }
-            // Without SphereUUID the death handler (empty-sphere revert) and the
-            // orphan/station-existence check never fire for station workers
-            if (tag.hasUUID("SphereUUID")) {
-                livingEntity.getPersistentData().putUUID("SphereUUID", tag.getUUID("SphereUUID"));
-            }
-
-            // Store station position in ant's persistent data
-            net.minecraft.nbt.LongTag posTag = net.minecraft.nbt.LongTag.valueOf(spawnPos.asLong());
-            livingEntity.getPersistentData().putLong("WorkStationPos", spawnPos.asLong());
-
-            if (livingEntity instanceof net.minecraft.world.entity.Mob m) {
-                m.setPersistenceRequired();
-            }
-
-            serverLevel.addFreshEntity(livingEntity);
-
-            // Register ant UUID in block entity
-            station.setWorkerUUID(livingEntity.getUUID());
-
-            // Consume the sphere (Station Pals consume the item) — ALWAYS,
-            // even in creative: keeping a usable copy would duplicate the pal
-            itemStack.shrink(1);
-
-            serverLevel.sendParticles(net.minecraft.core.particles.ParticleTypes.HAPPY_VILLAGER,
-                    spawnPos.getX() + 0.5, spawnPos.getY() + 1, spawnPos.getZ() + 0.5, 15, 0.5, 0.5, 0.5, 0.1);
-
-            return InteractionResult.CONSUME;
-        }
-
-        // Fallback: remove the placed block if entity creation failed
-        serverLevel.removeBlock(spawnPos, false);
-        return InteractionResult.FAIL;
     }
 
     @Override
@@ -328,6 +232,75 @@ public class FilledPalSphereItem extends Item {
                 }
             }
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Worker pals: the sphere travels WITH the pal
+    // ──────────────────────────────────────────────────────────────
+
+    /**
+     * ForgeData key holding a worker pal's own sphere NBT. A station_mode pal
+     * takes its sphere with it when summoned (the item leaves the player's
+     * inventory), so there is nothing to right-click to recall it — you
+     * right-click the PAL instead, and it hands the sphere back. Such pals are
+     * therefore exempt from the orphan rule, exactly like deployed ones.
+     */
+    public static final String KEY_CARRIED_SPHERE = "PalCarriedSphere";
+
+    /** True if this pal is holding its own sphere rather than the player. */
+    public static boolean carriesOwnSphere(Entity pal) {
+        return pal.getPersistentData().contains(KEY_CARRIED_SPHERE);
+    }
+
+    /**
+     * Stamps the sphere onto a freshly summoned worker pal. The caller consumes
+     * the item afterwards — from here on the pal IS the sphere.
+     */
+    public static void attachCarriedSphere(Entity pal, CompoundTag sphereTag) {
+        CompoundTag carried = sphereTag.copy();
+        carried.putBoolean("IsReleased", false);
+        carried.remove("EntityUUID");
+        carried.remove("SummonLockUntil");
+        pal.getPersistentData().put(KEY_CARRIED_SPHERE, carried);
+    }
+
+    /**
+     * Puts a carried-sphere pal back into its sphere and returns the item.
+     * Returns EMPTY if the pal isn't carrying one.
+     */
+    public static ItemStack recallCarriedSphere(ServerLevel pLevel, Entity pal) {
+        CompoundTag data = pal.getPersistentData();
+        if (!data.contains(KEY_CARRIED_SPHERE)) return ItemStack.EMPTY;
+        CompoundTag tag = data.getCompound(KEY_CARRIED_SPHERE).copy();
+        // Drop the marker BEFORE snapshotting, or every recall/summon cycle
+        // would nest one more copy of the sphere tag inside CapturedEntity
+        data.remove(KEY_CARRIED_SPHERE);
+
+        CompoundTag entityData = new CompoundTag();
+        if (pal.saveAsPassenger(entityData)) {
+            tag.put("CapturedEntity", entityData);
+        }
+        tag.putBoolean("IsReleased", false);
+        tag.remove("EntityUUID");
+        tag.remove("DeployMode");
+        tag.remove("AnchorPos");
+        tag.remove("AnchorDim");
+
+        pLevel.sendParticles(net.minecraft.core.particles.ParticleTypes.POOF,
+                pal.getX(), pal.getY() + 1, pal.getZ(), 10, 0.5, 0.5, 0.5, 0.1);
+        pLevel.playSound(null, pal.getX(), pal.getY(), pal.getZ(),
+                net.minecraft.sounds.SoundEvents.ENDERMAN_TELEPORT,
+                net.minecraft.sounds.SoundSource.NEUTRAL, 1.0F, 1.0F);
+        if (pal instanceof LivingEntity livingPal && data.hasUUID("PalOwner")) {
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(
+                    new com.mx.palmod.api.event.PalRecalledEvent(
+                            livingPal, data.getUUID("PalOwner")));
+        }
+        pal.discard();
+
+        ItemStack sphere = new ItemStack(com.mx.palmod.registry.ModRegistries.FILLED_PAL_SPHERE.get());
+        sphere.setTag(tag);
+        return sphere;
     }
 
     /** Auto-recall (inventory shuffle, item toss, logout) — never warps the player. */

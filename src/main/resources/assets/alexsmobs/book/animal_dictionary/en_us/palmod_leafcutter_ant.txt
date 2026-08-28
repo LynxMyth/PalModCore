@@ -3,7 +3,7 @@
 <NEWLINE>
 PAL STATS - Health: 8 | Attack: 2
 <NEWLINE>
-PAL ABILITY - Harvester. Place its Work Station near farmland. The ant harvests mature crops, stores the produce in the station, and snacks on stored produce to feed itself. Right-click the station to collect.
+PAL ABILITY - Harvester. Throw it out on farmland. The ant harvests mature crops, hauls the produce to the nearest Work Station, and snacks on stored produce to feed itself.
 <NEWLINE>
 WILD VARIANT - Skittish. A wild catchable one flees the moment it sees or hears you. Sneak to quarter its detection range before throwing a sphere.
 <NEWLINE>

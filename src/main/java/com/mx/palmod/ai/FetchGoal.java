@@ -178,8 +178,7 @@ public class FetchGoal extends Goal {
                 center.getX() - fetchRadius, center.getY() - 3, center.getZ() - fetchRadius,
                 center.getX() + fetchRadius, center.getY() + 3, center.getZ() + fetchRadius)) {
             BlockEntity be = level.getBlockEntity(pos);
-            if (be == null || be instanceof com.mx.palmod.block.PalWorkStationBlockEntity
-                    || be instanceof com.mx.palmod.block.PalFeederBlockEntity) continue;
+            if (be == null || be instanceof com.mx.palmod.block.PalFeederBlockEntity) continue;
             if (!containerHas(level, pos, item)) continue;
             double d = pos.distSqr(center);
             if (d < bestDist) {

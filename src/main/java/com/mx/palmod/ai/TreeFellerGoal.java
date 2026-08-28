@@ -33,8 +33,8 @@ public class TreeFellerGoal extends AbstractStationWorkerGoal {
     /** Trunk search is bounded to this distance from the base log. */
     private static final double MAX_TREE_REACH_SQR = 12 * 12;
 
-    public TreeFellerGoal(Mob mob, BlockPos stationPos, int harvestRadius, int wanderRadius, int logCap) {
-        super(mob, stationPos, harvestRadius, wanderRadius);
+    public TreeFellerGoal(Mob mob, int harvestRadius, int wanderRadius, int logCap) {
+        super(mob, harvestRadius, wanderRadius);
         this.logCap = logCap;
     }
 
@@ -52,7 +52,7 @@ public class TreeFellerGoal extends AbstractStationWorkerGoal {
         for (BlockPos pos : BlockPos.betweenClosed(
                 center.getX() - harvestRadius, center.getY() - 3, center.getZ() - harvestRadius,
                 center.getX() + harvestRadius, center.getY() + 3, center.getZ() + harvestRadius)) {
-            if (!withinStationRange(pos)) continue;
+            if (!withinWorkRange(pos)) continue;
             if (isTreeBase(level, pos)) {
                 double d = pos.distSqr(center);
                 if (d < bestDist) {

@@ -5,6 +5,40 @@ All notable changes to Palmod are documented in this file. Format loosely follow
 [SemVer](https://semver.org/) with a pre-`1.0.0` "beta" understanding — breaking changes to
 datapack schemas or save data may still happen between minor versions until `1.0.0`.
 
+## [0.9.3] - 2026-08-28
+
+The Pal Work Station is now a plain craftable chest, and worker pals carry their own sphere.
+
+### Added
+
+- **Work station crafting recipe** (`recipes/pal_work_station.json` — planks ring + chest + iron)
+  and loot table, so the station drops itself (and its contents) when broken.
+
+### Changed
+
+- **Pal Work Station is a plain 27-slot chest** (`BaseContainerBlockEntity` + `WorldlyContainer`):
+  vanilla ChestMenu UI, comparator output, `InvWrapper` item-handler cap, hoppers on every face.
+  It binds to no worker and has no ticker or sphere NBT, so breaking it is harmless. A static
+  per-dimension index of loaded stations (`onLoad`/`setRemoved`) backs `findNearest`. Old 1-slot
+  stations and their bound sphere migrate once automatically.
+- **Worker pals are station-free** (`AbstractStationWorkerGoal`). The work anchor is `PalWorkHome`
+  (where the pal was thrown); a full/refused/idle carry goes to the NEAREST station with room, and
+  with none in range the pal just holds its load. The sorter drains the nearest station, scanning
+  candidate containers once per probe instead of per slot.
+- **Worker spheres travel with the pal.** Summoning a `station_mode` pal consumes the sphere and
+  stamps it into the pal (`PalCarriedSphere`), so workers are orphan-exempt and keep running while
+  the owner is away or offline. Right-clicking the pal recalls it into that sphere; death drops an
+  empty sphere where it fell.
+- AM hive NBT (`Leaf`/`HivePos`) is scrubbed on every summon, not just on the old station path.
+
+## [0.9.2] - 2026-07-28
+
+### Fixed
+
+- **Hard crash on client load** (`ResourceLocationException` from `SoundManager`). The raw mesh
+  source shipped at `assets/PalsphereMesh/`, an invalid namespace (uppercase). The source art moved
+  to `art/pal_sphere_mesh/`, outside the jar; the shipped mesh assets already lived under `palmod`.
+
 ## [0.9.1] - 2026-07-21
 
 A visual/feel update for catching, plus two catch-result fixes.
